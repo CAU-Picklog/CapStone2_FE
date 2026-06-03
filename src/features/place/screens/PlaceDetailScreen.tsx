@@ -9,7 +9,7 @@
  * "보관함에 저장" 버튼은 API 모드에서만 표시됩니다.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -22,6 +22,9 @@ import {
   FlatList,
   ActivityIndicator,
   Platform,
+  Dimensions,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -40,9 +43,18 @@ import { ApiStorage } from '../../../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PlaceDetail'>;
 
+const SCREEN_WIDTH = Dimensions.get('window').width;
+
 export default function PlaceDetailScreen({ route, navigation }: Props) {
-  const { placeId, apiPlace } = route.params;
+  const { placeId, apiPlace, spotImages = [] } = route.params;
   const isApiMode = Boolean(apiPlace);
+  const [imageIndex, setImageIndex] = useState(0);
+  const imageScrollRef = useRef<ScrollView>(null);
+
+  const handleImageScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const index = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+    setImageIndex(index);
+  };
 
   // ── 공간 DNA (API 모드 전용, place와 병렬로 fetch됨) ─────
   const { dna, isLoading: isDnaLoading } = usePlaceSpaceDNA(
@@ -106,19 +118,39 @@ export default function PlaceDetailScreen({ route, navigation }: Props) {
   const displayUrl     = isApiMode ? apiPlace!.homepage_url : null;
   const thumbnailUrl   = isApiMode ? null : mockPlace!.thumbnailUrl;
 
+  const displayImages = isApiMode && spotImages.length > 0 ? spotImages : (thumbnailUrl ? [thumbnailUrl] : []);
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['bottom']}>
       <ScrollView bounces={false} showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: isApiMode ? 90 : 0 }}>
 
-        {/* 대표 이미지 / 플레이스홀더 */}
+        {/* 대표 이미지 / 슬라이더 */}
         <View style={styles.imageContainer}>
-          {thumbnailUrl
-            ? <Image source={{ uri: thumbnailUrl }} style={styles.image} resizeMode="cover" />
-            : <View style={[styles.image, styles.imagePlaceholder]}>
-                <Ionicons name="location" size={48} color={COLORS.gray[300]} />
-              </View>
-          }
+          {displayImages.length > 0 ? (
+            <ScrollView
+              ref={imageScrollRef}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              onMomentumScrollEnd={handleImageScroll}
+              scrollEventThrottle={16}
+              style={styles.imageSlider}
+            >
+              {displayImages.map((uri, idx) => (
+                <Image
+                  key={idx}
+                  source={{ uri }}
+                  style={[styles.image, { width: SCREEN_WIDTH }]}
+                  resizeMode="cover"
+                />
+              ))}
+            </ScrollView>
+          ) : (
+            <View style={[styles.image, styles.imagePlaceholder]}>
+              <Ionicons name="location" size={48} color={COLORS.gray[300]} />
+            </View>
+          )}
           {/* 뒤로가기 */}
           <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
             <Ionicons name="chevron-back" size={24} color={COLORS.white} />
@@ -127,6 +159,23 @@ export default function PlaceDetailScreen({ route, navigation }: Props) {
           <TouchableOpacity style={styles.shareButton} onPress={() => Alert.alert('공유', '공유 기능은 준비 중입니다.')}>
             <Ionicons name="share-outline" size={22} color={COLORS.white} />
           </TouchableOpacity>
+          {/* 페이지 인디케이터 */}
+          {displayImages.length > 1 && (
+            <View style={styles.dotsContainer}>
+              {displayImages.map((_, idx) => (
+                <View
+                  key={idx}
+                  style={[styles.dot, idx === imageIndex && styles.dotActive]}
+                />
+              ))}
+            </View>
+          )}
+          {/* 사진 카운터 */}
+          {displayImages.length > 1 && (
+            <View style={styles.imageCounter}>
+              <Text style={styles.imageCounterText}>{imageIndex + 1} / {displayImages.length}</Text>
+            </View>
+          )}
         </View>
 
         {/* 상세 정보 */}
@@ -429,9 +478,25 @@ export default function PlaceDetailScreen({ route, navigation }: Props) {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.white },
-  imageContainer: { position: 'relative' },
-  image: { width: '100%', height: 260, backgroundColor: COLORS.gray[200] },
-  imagePlaceholder: { alignItems: 'center', justifyContent: 'center' },
+  imageContainer: { position: 'relative', height: 260 },
+  imageSlider: { height: 260 },
+  image: { height: 260, backgroundColor: COLORS.gray[200] },
+  imagePlaceholder: { width: '100%', alignItems: 'center', justifyContent: 'center' },
+  dotsContainer: {
+    position: 'absolute', bottom: 10, left: 0, right: 0,
+    flexDirection: 'row', justifyContent: 'center', gap: 6,
+  },
+  dot: {
+    width: 6, height: 6, borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.5)',
+  },
+  dotActive: { backgroundColor: COLORS.white, width: 18 },
+  imageCounter: {
+    position: 'absolute', top: 16, right: 56,
+    backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 10,
+    paddingHorizontal: 8, paddingVertical: 3,
+  },
+  imageCounterText: { fontSize: 12, color: COLORS.white, fontWeight: '600' },
   backButton: {
     position: 'absolute', top: 16, left: 16,
     backgroundColor: 'rgba(0,0,0,0.4)', borderRadius: 20, padding: 8,

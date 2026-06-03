@@ -28,7 +28,12 @@ import {
   Platform,
   Alert,
   Image,
+  Dimensions,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
 } from 'react-native';
+
+const SCREEN_WIDTH = Dimensions.get('window').width - 32; // padding 16*2
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -70,6 +75,12 @@ export default function InstagramImportScreen({ navigation }: Props) {
   const [errorMsg, setErrorMsg] = useState('');
 
   const isMountedRef = useRef(true);
+  const [previewImageIndex, setPreviewImageIndex] = useState(0);
+
+  const handlePreviewImageScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const index = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+    setPreviewImageIndex(index);
+  }, []);
 
   // ── 글로벌 크롤링 상태 구독 ────────────────────────────────────────────────
   const globalStatus = useCrawlingStore((s) => s.status);
@@ -222,6 +233,7 @@ export default function InstagramImportScreen({ navigation }: Props) {
       instagram_url: crawlData?.url ?? url.trim(),
       caption: crawlData?.caption ?? null,
       thumbnail_url: crawlData?.thumbnail_url ?? (crawlData?.images?.[0] ?? null),
+      image_urls: crawlData?.images ?? null,
       naver_place_id: candidate.naver_place_id,
       place_name: candidate.name,
       place_address: candidate.road_address ?? candidate.address ?? '',
@@ -272,6 +284,7 @@ export default function InstagramImportScreen({ navigation }: Props) {
               place_id: savedSpot.place_id,
               instagram_url: savedSpot.instagram_url,
               thumbnail_url: savedSpot.thumbnail_url,
+              image_urls: savedSpot.image_urls ?? null,
             })
           )
         );
@@ -334,9 +347,13 @@ export default function InstagramImportScreen({ navigation }: Props) {
     );
   }
 
-  const previewImage =
-    crawlData?.thumbnail_url ??
-    (crawlData?.images && crawlData.images.length > 0 ? crawlData.images[0] : null);
+  const previewImages: string[] = crawlData
+    ? [
+        ...(crawlData.thumbnail_url ? [crawlData.thumbnail_url] : []),
+        ...(crawlData.images ?? []).filter(img => img !== crawlData.thumbnail_url),
+      ]
+    : [];
+  const previewImage = previewImages[0] ?? null;
 
   // ─── 보관함 다중 선택 UI (공통) ──────────────────────────────────────────
   const StorageMultiSelect = ({ disabledId }: { disabledId?: number }) => (
@@ -482,12 +499,32 @@ export default function InstagramImportScreen({ navigation }: Props) {
           {/* ══ STEP: preview (saved) ══ */}
           {step === 'preview' && savedSpot && (
             <>
-              {(savedSpot.thumbnail_url ?? previewImage) ? (
-                <Image
-                  source={{ uri: (savedSpot.thumbnail_url ?? previewImage)! }}
-                  style={styles.previewImage}
-                  resizeMode="cover"
-                />
+              {previewImages.length > 0 ? (
+                <View style={styles.previewImageWrap}>
+                  <ScrollView
+                    horizontal
+                    pagingEnabled
+                    showsHorizontalScrollIndicator={false}
+                    onMomentumScrollEnd={handlePreviewImageScroll}
+                    scrollEventThrottle={16}
+                  >
+                    {previewImages.map((uri, idx) => (
+                      <Image
+                        key={idx}
+                        source={{ uri }}
+                        style={[styles.previewImage, { width: SCREEN_WIDTH }]}
+                        resizeMode="cover"
+                      />
+                    ))}
+                  </ScrollView>
+                  {previewImages.length > 1 && (
+                    <View style={styles.previewDots}>
+                      {previewImages.map((_, idx) => (
+                        <View key={idx} style={[styles.previewDot, idx === previewImageIndex && styles.previewDotActive]} />
+                      ))}
+                    </View>
+                  )}
+                </View>
               ) : (
                 <View style={[styles.previewImage, styles.previewImagePlaceholder]}>
                   <Ionicons name="image-outline" size={40} color={COLORS.gray[300]} />
@@ -546,8 +583,32 @@ export default function InstagramImportScreen({ navigation }: Props) {
           {/* ══ STEP: preview (needs_selection) ══ */}
           {step === 'preview' && selectedCandidate && (
             <>
-              {previewImage ? (
-                <Image source={{ uri: previewImage }} style={styles.previewImage} resizeMode="cover" />
+              {previewImages.length > 0 ? (
+                <View style={styles.previewImageWrap}>
+                  <ScrollView
+                    horizontal
+                    pagingEnabled
+                    showsHorizontalScrollIndicator={false}
+                    onMomentumScrollEnd={handlePreviewImageScroll}
+                    scrollEventThrottle={16}
+                  >
+                    {previewImages.map((uri, idx) => (
+                      <Image
+                        key={idx}
+                        source={{ uri }}
+                        style={[styles.previewImage, { width: SCREEN_WIDTH }]}
+                        resizeMode="cover"
+                      />
+                    ))}
+                  </ScrollView>
+                  {previewImages.length > 1 && (
+                    <View style={styles.previewDots}>
+                      {previewImages.map((_, idx) => (
+                        <View key={idx} style={[styles.previewDot, idx === previewImageIndex && styles.previewDotActive]} />
+                      ))}
+                    </View>
+                  )}
+                </View>
               ) : (
                 <View style={[styles.previewImage, styles.previewImagePlaceholder]}>
                   <Ionicons name="image-outline" size={40} color={COLORS.gray[300]} />
@@ -751,11 +812,24 @@ const styles = StyleSheet.create({
   submitBtnDisabled: { opacity: 0.45 },
   submitBtnText: { color: '#fff', fontSize: FONTS.size.md, fontWeight: FONTS.weight.semibold },
 
-  previewImage: {
-    width: '100%', height: 220, borderRadius: THEME.radius.lg,
+  previewImageWrap: {
+    borderRadius: THEME.radius.lg, overflow: 'hidden',
     marginBottom: SPACING.md, backgroundColor: COLORS.gray[100],
+    height: 220, position: 'relative',
   },
-  previewImagePlaceholder: { alignItems: 'center', justifyContent: 'center' },
+  previewImage: {
+    height: 220, backgroundColor: COLORS.gray[100],
+  },
+  previewImagePlaceholder: { width: '100%', alignItems: 'center', justifyContent: 'center', borderRadius: THEME.radius.lg, marginBottom: SPACING.md },
+  previewDots: {
+    position: 'absolute', bottom: 8, left: 0, right: 0,
+    flexDirection: 'row', justifyContent: 'center', gap: 5,
+  },
+  previewDot: {
+    width: 6, height: 6, borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.5)',
+  },
+  previewDotActive: { backgroundColor: COLORS.white, width: 16 },
   previewCard: {
     backgroundColor: THEME.colors.surface, borderRadius: THEME.radius.lg,
     padding: SPACING.md, marginBottom: SPACING.md,

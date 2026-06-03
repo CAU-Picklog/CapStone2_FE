@@ -16,6 +16,7 @@ export interface ApiSpot {
   place?: ApiPlaceDetail;          // 서버가 조인해서 줄 때만 존재
   instagram_url: string | null;
   thumbnail_url: string | null;
+  image_urls?: string[] | null;
   user_memo: string;
   user_rating: number | null;
   created_at: string;
@@ -26,6 +27,7 @@ export interface CreateSpotInput {
   place_id: number;
   instagram_url?: string | null;
   thumbnail_url?: string | null;
+  image_urls?: string[] | null;
   user_memo?: string;
   user_rating?: number | null;
 }
