@@ -52,6 +52,7 @@ export interface ShareJobSpot {
   } | null;
   instagram_url?: string | null;
   thumbnail_url?: string | null;
+  image_urls?: string[] | null;
   user_memo?: string | null;
   created_at: string;
 }
@@ -85,6 +86,7 @@ export interface InstagramSaveInput {
   instagram_url: string;
   caption?: string | null;
   thumbnail_url?: string | null;
+  image_urls?: string[] | null;
   naver_place_id: string;
   place_name: string;
   place_address: string;

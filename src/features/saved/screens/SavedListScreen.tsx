@@ -7,7 +7,7 @@
  * 칩 롱프레스 → 삭제
  */
 
-import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef, memo } from 'react';
 import {
   View,
   Text,
@@ -22,6 +22,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -45,13 +46,17 @@ interface SpotCardProps {
   onDelete?: () => void;
 }
 
-function SpotCard({ spot, onPress, onDelete }: SpotCardProps) {
+const SpotCard = memo(function SpotCard({ spot, onPress, onDelete }: SpotCardProps) {
   const place = spot.place;
   return (
     <TouchableOpacity style={spotCardStyles.card} onPress={onPress} activeOpacity={0.75}>
-      <View style={spotCardStyles.iconWrap}>
-        <Ionicons name="location" size={20} color={COLORS.primary} />
-      </View>
+      {spot.thumbnail_url ? (
+        <Image source={{ uri: spot.thumbnail_url }} style={spotCardStyles.thumbnail} resizeMode="cover" />
+      ) : (
+        <View style={spotCardStyles.iconWrap}>
+          <Ionicons name="location" size={20} color={COLORS.primary} />
+        </View>
+      )}
       <View style={spotCardStyles.info}>
         <Text style={spotCardStyles.name} numberOfLines={1}>
           {place?.name ?? '이름 없는 장소'}
@@ -65,9 +70,9 @@ function SpotCard({ spot, onPress, onDelete }: SpotCardProps) {
         {spot.user_memo ? (
           <Text style={spotCardStyles.memo} numberOfLines={1}>💬 {spot.user_memo}</Text>
         ) : null}
-        {spot.thumbnail_url ? (
-          <Text style={spotCardStyles.igTag}>📷 인스타그램</Text>
-        ) : null}
+        {spot.thumbnail_url && (
+          <Text style={spotCardStyles.igTag}>📷 인스타그램{(spot.image_urls?.length ?? 0) > 1 ? ` +${spot.image_urls!.length - 1}장` : ''}</Text>
+        )}
       </View>
       {onDelete ? (
         <TouchableOpacity onPress={onDelete} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -78,7 +83,7 @@ function SpotCard({ spot, onPress, onDelete }: SpotCardProps) {
       )}
     </TouchableOpacity>
   );
-}
+});
 
 const spotCardStyles = StyleSheet.create({
   card: {
@@ -93,13 +98,20 @@ const spotCardStyles = StyleSheet.create({
     gap: SPACING.sm,
   },
   iconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: '#EEF2FF',
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
+  },
+  thumbnail: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    flexShrink: 0,
+    backgroundColor: COLORS.gray[100],
   },
   info: { flex: 1 },
   name: {
@@ -154,7 +166,7 @@ interface FolderChipProps {
   onLongPress?: () => void;
 }
 
-function FolderChip({ folder, selected, onPress, onLongPress }: FolderChipProps) {
+const FolderChip = memo(function FolderChip({ folder, selected, onPress, onLongPress }: FolderChipProps) {
   return (
     <TouchableOpacity
       style={[chipStyles.chip, selected && chipStyles.chipSelected]}
@@ -172,7 +184,7 @@ function FolderChip({ folder, selected, onPress, onLongPress }: FolderChipProps)
       </Text>
     </TouchableOpacity>
   );
-}
+});
 
 const chipStyles = StyleSheet.create({
   chip: {
@@ -220,6 +232,8 @@ export default function SavedListScreen() {
   const loadingForRef = useRef<string | null>(null);
   // storages를 ref로 유지 → loadAllSpots를 안정적인 참조로 만들기 위함
   const storagesRef = useRef(storages);
+  // 이전에 로드한 storages ID 목록 → 동일하면 silent 갱신
+  const prevStorageIdsRef = useRef<string>('');
 
   // 보관함 생성 모달
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -275,9 +289,10 @@ export default function SavedListScreen() {
   }, []);
 
   // storages는 ref로 접근 → useCallback deps에서 제거 → 참조 안정
-  const loadAllSpots = useCallback(async () => {
+  // silent=true 이면 이미 데이터가 있을 때 스피너 없이 백그라운드 갱신
+  const loadAllSpots = useCallback(async (silent = false) => {
     if (storagesRef.current.length === 0) return;
-    setIsLoadingAll(true);
+    if (!silent) setIsLoadingAll(true);
     try {
       const results = await Promise.all(
         storagesRef.current.map((s) => spotService.getSpots(s.id)),
@@ -303,9 +318,13 @@ export default function SavedListScreen() {
   }, [selectedFolderId, loadSpots, loadAllSpots]);
 
   // storages 업데이트 시 전체 탭이면 재로드
-  // (fetchStorages 완료 → storages 변경 → 여기서 감지 → loadAllSpots 호출)
+  // ID 목록이 바뀌었을 때만 full 로드, 동일하면 silent 갱신 (스피너 없음)
   useEffect(() => {
-    if (selectedFolderId === 'all' && storages.length > 0) loadAllSpots();
+    if (selectedFolderId !== 'all' || storages.length === 0) return;
+    const newIds = storages.map((s) => s.id).sort().join(',');
+    const idsChanged = newIds !== prevStorageIdsRef.current;
+    prevStorageIdsRef.current = newIds;
+    loadAllSpots(!idsChanged); // IDs 변경 시 full 로드, 동일하면 silent
   }, [storages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 화면 포커스 시 보관함 목록 갱신 (loadAllSpots는 storages useEffect가 처리)
@@ -322,6 +341,64 @@ export default function SavedListScreen() {
 
   const selectedFolder = folders.find((f) => f.id === selectedFolderId) ?? ALL_FOLDER;
   const isStorageFolder = selectedFolderId !== 'all';
+
+  const renderStorageSpotItem = useCallback(({ item }: { item: ApiSpot }) => (
+    <SpotCard
+      spot={item}
+      onPress={() => {
+        if (item.place) {
+          const spotImages = item.image_urls && item.image_urls.length > 0
+            ? item.image_urls
+            : item.thumbnail_url ? [item.thumbnail_url] : [];
+          navigation.navigate('PlaceDetail', {
+            placeId: `api-${item.place_id}`,
+            apiPlace: item.place,
+            spotImages,
+          });
+        }
+      }}
+      onDelete={() => {
+        const storageId = item.storage_id;
+        Alert.alert(
+          '장소 삭제',
+          `"${item.place?.name ?? `장소 #${item.place_id}`}"을(를)\n보관함에서 제거할까요?`,
+          [
+            { text: '취소', style: 'cancel' },
+            {
+              text: '삭제',
+              style: 'destructive',
+              onPress: async () => {
+                try {
+                  await spotService.deleteSpot(storageId, item.id);
+                  setSpots((prev) => prev.filter((s) => s.id !== item.id));
+                } catch {
+                  Alert.alert('오류', '삭제에 실패했습니다.');
+                }
+              },
+            },
+          ]
+        );
+      }}
+    />
+  ), [navigation]);
+
+  const renderAllSpotItem = useCallback(({ item }: { item: ApiSpot }) => (
+    <SpotCard
+      spot={item}
+      onPress={() => {
+        if (item.place) {
+          const spotImages = item.image_urls && item.image_urls.length > 0
+            ? item.image_urls
+            : item.thumbnail_url ? [item.thumbnail_url] : [];
+          navigation.navigate('PlaceDetail', {
+            placeId: `api-${item.place_id}`,
+            apiPlace: item.place,
+            spotImages,
+          });
+        }
+      }}
+    />
+  ), [navigation]);
 
   const handleCreateStorage = useCallback(async () => {
     if (!newTitle.trim()) {
@@ -435,41 +512,7 @@ export default function SavedListScreen() {
               data={spots}
               keyExtractor={(item) => String(item.id)}
               contentContainerStyle={styles.listContent}
-              renderItem={({ item }) => (
-                <SpotCard
-                  spot={item}
-                  onPress={() => {
-                    if (item.place) {
-                      navigation.navigate('PlaceDetail', {
-                        placeId: `api-${item.place_id}`,
-                        apiPlace: item.place,
-                      });
-                    }
-                  }}
-                  onDelete={() => {
-                    const storageId = item.storage_id;
-                    Alert.alert(
-                      '장소 삭제',
-                      `"${item.place?.name ?? `장소 #${item.place_id}`}"을(를)\n보관함에서 제거할까요?`,
-                      [
-                        { text: '취소', style: 'cancel' },
-                        {
-                          text: '삭제',
-                          style: 'destructive',
-                          onPress: async () => {
-                            try {
-                              await spotService.deleteSpot(storageId, item.id);
-                              setSpots((prev) => prev.filter((s) => s.id !== item.id));
-                            } catch {
-                              Alert.alert('오류', '삭제에 실패했습니다.');
-                            }
-                          },
-                        },
-                      ]
-                    );
-                  }}
-                />
-              )}
+              renderItem={renderStorageSpotItem}
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
                   <Ionicons name="bookmark-outline" size={56} color={COLORS.gray[300]} />
@@ -493,19 +536,7 @@ export default function SavedListScreen() {
               data={allSpots}
               keyExtractor={(item) => String(item.id)}
               contentContainerStyle={styles.listContent}
-              renderItem={({ item }) => (
-                <SpotCard
-                  spot={item}
-                  onPress={() => {
-                    if (item.place) {
-                      navigation.navigate('PlaceDetail', {
-                        placeId: `api-${item.place_id}`,
-                        apiPlace: item.place,
-                      });
-                    }
-                  }}
-                />
-              )}
+              renderItem={renderAllSpotItem}
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
                   <Ionicons name="bookmark-outline" size={56} color={COLORS.gray[300]} />
