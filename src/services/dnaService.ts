@@ -9,14 +9,11 @@
  */
 
 import { Place } from '../types';
-import { UserSpaceDNA, DNAFilter, PlaceSpaceDNA } from '../types/dna';
+import { UserSpaceDNA, DNAFilter, PlaceSpaceDNA, derivePlaceDNACode } from '../types/dna';
 import { MOCK_PLACES } from './mock/mockPlaces';
 import api from './api';
 
-const simulateDelay = (ms = 700) =>
-  new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-// Mock DNA 응답 (AI 팀 API 연동 전까지 사용)
+// Mock DNA 응답 (실제 API 실패 시 폴백)
 const MOCK_USER_DNA: UserSpaceDNA = {
   userId: 'me',
   code: 'S-M-V',
@@ -24,6 +21,78 @@ const MOCK_USER_DNA: UserSpaceDNA = {
   placeCount: 6,
   updatedAt: new Date().toISOString(),
 };
+
+/**
+ * GET /users/me/space-dna 응답을 UserSpaceDNA 포맷으로 정규화
+ *
+ * 실제 응답 형태:
+ * {
+ *   has_data: true,
+ *   mbti_axes: {
+ *     density: { D: 70, S: 30 },
+ *     color:   { H: 45, M: 55 },
+ *     form:    { F: 60, V: 40 }
+ *   },
+ *   total_visits: 5,
+ *   last_analyzed: "2026-..."
+ * }
+ */
+function normalizeUserDNA(raw: unknown, userId: string): UserSpaceDNA | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+
+  // has_data: false → 분석 데이터 없음
+  if (r.has_data === false) return null;
+
+  if (r.mbti_axes && typeof r.mbti_axes === 'object') {
+    const axes = r.mbti_axes as Record<string, Record<string, number> | number>;
+
+    /**
+     * 한 축의 객체에서 "positive side" 값(0~100)을 추출.
+     * 온보딩 키: dense/high/fresh  (createSpaceDNA 참고)
+     * AI 트리거 키: D/H/F
+     * 어느 쪽도 아니면 첫 번째 값 사용
+     */
+    const pickPositive = (axisVal: unknown): number => {
+      if (typeof axisVal === 'number') return axisVal; // 단일 숫자 형태
+      if (!axisVal || typeof axisVal !== 'object') return 50;
+      const obj = axisVal as Record<string, number>;
+      // 온보딩 형태
+      if (typeof obj.dense   === 'number') return obj.dense;
+      if (typeof obj.high    === 'number') return obj.high;
+      if (typeof obj.fresh   === 'number') return obj.fresh;
+      // AI 트리거 형태
+      if (typeof obj.D === 'number') return obj.D;
+      if (typeof obj.H === 'number') return obj.H;
+      if (typeof obj.F === 'number') return obj.F;
+      // 알 수 없는 키 → 첫 번째 값
+      const vals = Object.values(obj).filter((v) => typeof v === 'number');
+      return (vals[0] as number) ?? 50;
+    };
+
+    const density = pickPositive(axes.density); // dense / D
+    const color   = pickPositive(axes.color);   // high  / H
+    const form    = pickPositive(axes.form);    // fresh / F
+
+    const D = Math.round(density);      const S = 100 - D;
+    const H = Math.round(color);        const M = 100 - H;
+    const F2 = Math.round(form);        const V = 100 - F2;
+
+    console.log('[dnaService] normalizeUserDNA axes →', { D, S, H, M, F: F2, V });
+
+    const code = derivePlaceDNACode({ density, color, form });
+
+    return {
+      userId,
+      code,
+      score: { D, S, H, M, F: F2, V },
+      placeCount: typeof r.total_visits === 'number' ? r.total_visits : 0,
+      updatedAt:  typeof r.last_analyzed === 'string' ? r.last_analyzed : new Date().toISOString(),
+    };
+  }
+
+  return null;
+}
 
 // DNA 코드별 성향 설명 (FE 표시용)
 const DNA_DESCRIPTIONS: Record<string, { title: string; description: string; emoji: string }> = {
@@ -45,12 +114,25 @@ const dnaService = {
    * @param userId - 유저 ID
    * @returns UserSpaceDNA (code, score, placeCount 등)
    */
-  async getUserDNA(userId: string): Promise<UserSpaceDNA> {
-    await simulateDelay();
-
-    // TODO (AI 팀): return (await api.get('/api/ai/dna/me')).data;
-
-    return { ...MOCK_USER_DNA, userId };
+  /**
+   * null 반환 = 아직 분석 데이터 없음 (has_data:false) 또는 API 실패
+   * Mock으로 절대 폴백하지 않음 → 화면은 퀴즈 DNA(spaceDNA)를 fallback으로 사용
+   */
+  async getUserDNA(userId: string): Promise<UserSpaceDNA | null> {
+    try {
+      const res = await api.get<unknown>('/users/me/space-dna');
+      const normalized = normalizeUserDNA(res.data, userId);
+      if (normalized) {
+        console.log('[dnaService] getUserDNA 성공:', normalized.code);
+        return normalized;
+      }
+      console.warn('[dnaService] getUserDNA has_data:false 또는 파싱 실패:', JSON.stringify(res.data)?.slice(0, 100));
+      return null;
+    } catch (e: unknown) {
+      const err = e as { response?: { status?: number }; message?: string };
+      console.warn('[dnaService] getUserDNA API 실패 — status:', err?.response?.status, err?.message);
+      return null;
+    }
   },
 
   /**
@@ -61,8 +143,6 @@ const dnaService = {
    * @returns 추천 장소 목록
    */
   async getRecommendations(filter: DNAFilter): Promise<Place[]> {
-    await simulateDelay(800);
-
     // TODO (AI 팀): return (await api.post('/api/ai/dna/recommend', filter)).data;
 
     // Mock: 필터 미선택 시 전체, 선택 시 앞 3개 반환

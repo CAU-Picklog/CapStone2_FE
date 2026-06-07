@@ -122,9 +122,17 @@ export default function MapScreen() {
   const handleMarkerPress = useCallback((markerId: string) => {
     const spot = spotsById.get(markerId);
     if (spot?.place) {
+      // spot에 저장된 이미지를 상세페이지에 전달
+      const spotImages: string[] =
+        spot.image_urls && spot.image_urls.length > 0
+          ? spot.image_urls
+          : spot.thumbnail_url
+          ? [spot.thumbnail_url]
+          : [];
       navigation.navigate('PlaceDetail', {
         placeId: `api-${spot.place_id}`,
         apiPlace: spot.place,
+        spotImages,
       });
     }
   }, [spotsById, navigation]);

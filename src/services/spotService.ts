@@ -19,7 +19,7 @@
  */
 
 import api from './api';
-import { ApiSpot, CreateSpotInput } from '../types/spot';
+import { ApiSpot, CreateSpotInput, UpdateSpotInput } from '../types/spot';
 import { ApiPlaceDetail } from '../types/place';
 
 // ─── 모듈 레벨 place 캐시 ────────────────────────────────────────────────────
@@ -189,6 +189,12 @@ const spotService = {
   /** POST /storages/{storageId}/spots */
   async createSpot(storageId: number, input: CreateSpotInput): Promise<ApiSpot> {
     const res = await api.post<ApiSpot>(`/storages/${storageId}/spots`, input);
+    return res.data;
+  },
+
+  /** PUT /storages/{storageId}/spots/{spotId} */
+  async updateSpot(storageId: number, spotId: number, input: UpdateSpotInput): Promise<ApiSpot> {
+    const res = await api.put<ApiSpot>(`/storages/${storageId}/spots/${spotId}`, input);
     return res.data;
   },
 

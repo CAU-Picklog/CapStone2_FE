@@ -19,6 +19,7 @@ export interface ApiSpot {
   image_urls?: string[] | null;
   user_memo: string;
   user_rating: number | null;
+  is_visited: boolean;
   created_at: string;
 }
 
@@ -30,4 +31,13 @@ export interface CreateSpotInput {
   image_urls?: string[] | null;
   user_memo?: string;
   user_rating?: number | null;
+}
+
+/** PUT /storages/{storage_id}/spots/{spot_id} 요청 바디 */
+export interface UpdateSpotInput {
+  instagram_url?: string | null;
+  thumbnail_url?: string | null;
+  user_memo?: string;
+  user_rating?: number | null;
+  is_visited?: boolean;
 }

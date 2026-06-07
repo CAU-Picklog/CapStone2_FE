@@ -9,13 +9,14 @@
  * - "지금 당장 갈 곳 추천" 버튼
  */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import {
   View,
   Text,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -178,12 +179,20 @@ const barStyles = StyleSheet.create({
 
 // ── 메인 화면 ─────────────────────────────────────────────
 export default function ProfileScreen({ navigation }: Props) {
-  const { user, spaceDNA: rawDNA } = useAuthStore();
+  const { user, spaceDNA: rawDNA, userDNA, refreshUserDNA } = useAuthStore();
   const { places, savedPlaceIds } = usePlaceStore();
+  const [isDnaLoading, setIsDnaLoading] = useState(false);
 
+  // 화면 진입 시마다 최신 DNA 재조회
+  useEffect(() => {
+    setIsDnaLoading(true);
+    refreshUserDNA().finally(() => setIsDnaLoading(false));
+  }, []);
+
+  // userDNA(서버 갱신값)가 있으면 우선 사용, 없으면 퀴즈 결과 변환
   const dna: UserSpaceDNA | null = useMemo(
-    () => (rawDNA ? convertDNA(rawDNA) : null),
-    [rawDNA],
+    () => userDNA ?? (rawDNA ? convertDNA(rawDNA) : null),
+    [userDNA, rawDNA],
   );
   const dnaDesc = dna ? dnaService.getDNADescription(dna.code) : null;
 
@@ -224,7 +233,12 @@ export default function ProfileScreen({ navigation }: Props) {
         </View>
 
         {/* 공간 DNA 섹션 */}
-        <Text style={styles.sectionHeader}>나의 공간 DNA</Text>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionHeader}>나의 공간 DNA</Text>
+          {isDnaLoading && (
+            <ActivityIndicator size="small" color={THEME.colors.textMuted} />
+          )}
+        </View>
 
         {dna && dnaDesc ? (
           <>
@@ -371,6 +385,11 @@ const styles = StyleSheet.create({
     color: THEME.colors.textMuted,
   },
 
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   sectionHeader: {
     fontSize: THEME.font.size.xl,
     fontWeight: THEME.font.weight.bold,
