@@ -30,13 +30,45 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 
 import { useStorageStore } from '../../../store/useStorageStore';
+import { useAuthStore } from '../../../store/useAuthStore';
 import { useSwipeTabNavigation } from '../../../hooks/useSwipeTabNavigation';
 import { RootStackParamList } from '../../../navigation/types';
 import { COLORS, FONTS, SPACING, THEME } from '../../../constants';
 import { ApiSpot } from '../../../types/spot';
 import spotService from '../../../services/spotService';
+import dnaService from '../../../services/dnaService';
+import { derivePlaceDNACode } from '../../../types/dna';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
+// ─── 저장소 DNA 계산 ─────────────────────────────────────
+interface StorageDNAResult {
+  code: string;
+  axes: { density: number; color: number; form: number };
+  count: number; // 분석된 장소 수
+}
+
+async function calcStorageDNA(spots: ApiSpot[]): Promise<StorageDNAResult | null> {
+  if (spots.length === 0) return null;
+  const placeIds = [...new Set(spots.map((s) => s.place_id))];
+  const results = await Promise.all(
+    placeIds.map((id) => dnaService.getPlaceSpaceDNA(id))
+  );
+  const valid = results.filter((r) => r !== null && r.has_data);
+  if (valid.length === 0) return null;
+  const avgDensity = valid.reduce((s, r) => s + r!.mbti_axes.density, 0) / valid.length;
+  const avgColor   = valid.reduce((s, r) => s + r!.mbti_axes.color,   0) / valid.length;
+  const avgForm    = valid.reduce((s, r) => s + r!.mbti_axes.form,    0) / valid.length;
+  return {
+    code: derivePlaceDNACode({ density: avgDensity, color: avgColor, form: avgForm }),
+    axes: {
+      density: Math.round(avgDensity),
+      color:   Math.round(avgColor),
+      form:    Math.round(avgForm),
+    },
+    count: valid.length,
+  };
+}
 
 // ─── SpotCard 컴포넌트 ───────────────────────────────────
 
@@ -44,10 +76,13 @@ interface SpotCardProps {
   spot: ApiSpot;
   onPress: () => void;
   onDelete?: () => void;
+  onVisit?: () => void;
+  isVisiting?: boolean;
 }
 
-const SpotCard = memo(function SpotCard({ spot, onPress, onDelete }: SpotCardProps) {
+const SpotCard = memo(function SpotCard({ spot, onPress, onDelete, onVisit, isVisiting }: SpotCardProps) {
   const place = spot.place;
+  const visited = spot.is_visited;
   return (
     <TouchableOpacity style={spotCardStyles.card} onPress={onPress} activeOpacity={0.75}>
       {spot.thumbnail_url ? (
@@ -58,9 +93,17 @@ const SpotCard = memo(function SpotCard({ spot, onPress, onDelete }: SpotCardPro
         </View>
       )}
       <View style={spotCardStyles.info}>
-        <Text style={spotCardStyles.name} numberOfLines={1}>
-          {place?.name ?? '이름 없는 장소'}
-        </Text>
+        <View style={spotCardStyles.nameRow}>
+          <Text style={spotCardStyles.name} numberOfLines={1}>
+            {place?.name ?? '이름 없는 장소'}
+          </Text>
+          {visited && (
+            <View style={spotCardStyles.visitedBadge}>
+              <Ionicons name="checkmark" size={10} color={COLORS.white} />
+              <Text style={spotCardStyles.visitedBadgeText}>방문완료</Text>
+            </View>
+          )}
+        </View>
         {place?.address ? (
           <Text style={spotCardStyles.address} numberOfLines={1}>{place.address}</Text>
         ) : null}
@@ -74,13 +117,33 @@ const SpotCard = memo(function SpotCard({ spot, onPress, onDelete }: SpotCardPro
           <Text style={spotCardStyles.igTag}>📷 인스타그램{(spot.image_urls?.length ?? 0) > 1 ? ` +${spot.image_urls!.length - 1}장` : ''}</Text>
         )}
       </View>
-      {onDelete ? (
-        <TouchableOpacity onPress={onDelete} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Ionicons name="trash-outline" size={16} color={COLORS.gray[400]} />
-        </TouchableOpacity>
-      ) : (
-        <Ionicons name="chevron-forward" size={16} color={COLORS.gray[400]} />
-      )}
+      <View style={spotCardStyles.actions}>
+        {/* 방문 완료 버튼 */}
+        {onVisit && (
+          isVisiting ? (
+            <ActivityIndicator size="small" color={COLORS.primary} style={{ marginBottom: 4 }} />
+          ) : (
+            <TouchableOpacity
+              onPress={onVisit}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={spotCardStyles.visitBtn}
+            >
+              <Ionicons
+                name={visited ? 'checkmark-circle' : 'checkmark-circle-outline'}
+                size={22}
+                color={visited ? '#34C759' : COLORS.gray[400]}
+              />
+            </TouchableOpacity>
+          )
+        )}
+        {onDelete ? (
+          <TouchableOpacity onPress={onDelete} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="trash-outline" size={16} color={COLORS.gray[400]} />
+          </TouchableOpacity>
+        ) : (
+          <Ionicons name="chevron-forward" size={16} color={COLORS.gray[400]} />
+        )}
+      </View>
     </TouchableOpacity>
   );
 });
@@ -114,6 +177,20 @@ const spotCardStyles = StyleSheet.create({
     backgroundColor: COLORS.gray[100],
   },
   info: { flex: 1 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
+  visitedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: '#34C759',
+    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  visitedBadgeText: { fontSize: 9, color: COLORS.white, fontWeight: '600' },
+  actions: { alignItems: 'center', gap: 6 },
+  visitBtn: { padding: 2 },
+  visitBtnDone: { opacity: 1 },
   name: {
     fontSize: FONTS.size.md,
     fontWeight: FONTS.weight.semibold,
@@ -218,6 +295,7 @@ const chipStyles = StyleSheet.create({
 export default function SavedListScreen() {
   const navigation = useNavigation<NavigationProp>();
   const { storages, isLoading, fetchStorages, createStorage, deleteStorage } = useStorageStore();
+  const { refreshUserDNA } = useAuthStore();
   const { panHandlers, animatedStyle } = useSwipeTabNavigation();
 
   const [selectedFolderId, setSelectedFolderId] = useState<string>('all');
@@ -235,10 +313,21 @@ export default function SavedListScreen() {
   // 이전에 로드한 storages ID 목록 → 동일하면 silent 갱신
   const prevStorageIdsRef = useRef<string>('');
 
+  // 방문 완료 처리 중인 spot ID 추적
+  const [visitingSpotId, setVisitingSpotId] = useState<number | null>(null);
+
+  // 저장소 DNA (선택된 보관함의 종합 DNA)
+  const [storageDNA, setStorageDNA] = useState<StorageDNAResult | null>(null);
+
   // 보관함 생성 모달
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+
+  // 초대 코드 입력 모달
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteToken, setInviteToken] = useState('');
+  const [isJoining, setIsJoining] = useState(false);
 
   useEffect(() => {
     fetchStorages();
@@ -311,11 +400,18 @@ export default function SavedListScreen() {
     }
   }, []); // storagesRef.current로 접근하므로 deps 없음 → 안정적인 참조
 
-  // 탭 변경 시 spot 로드
+  // 탭 변경 시 spot 로드 + DNA 초기화
   useEffect(() => {
+    setStorageDNA(null);
     if (selectedFolderId === 'all') loadAllSpots();
     else loadSpots(selectedFolderId);
   }, [selectedFolderId, loadSpots, loadAllSpots]);
+
+  // 보관함 spots 로드 완료 후 DNA 백그라운드 계산
+  useEffect(() => {
+    if (selectedFolderId === 'all' || spots.length === 0) return;
+    calcStorageDNA(spots).then((code) => setStorageDNA(code));
+  }, [spots, selectedFolderId]);
 
   // storages 업데이트 시 전체 탭이면 재로드
   // ID 목록이 바뀌었을 때만 full 로드, 동일하면 silent 갱신 (스피너 없음)
@@ -342,6 +438,42 @@ export default function SavedListScreen() {
   const selectedFolder = folders.find((f) => f.id === selectedFolderId) ?? ALL_FOLDER;
   const isStorageFolder = selectedFolderId !== 'all';
 
+  /** is_visited 토글 — 방문 완료 ↔ 취소 */
+  const handleVisit = useCallback(async (spot: ApiSpot) => {
+    if (visitingSpotId === spot.id) return;
+    const newVisited = !spot.is_visited;
+    console.log(`[handleVisit] spot=${spot.id} ${spot.is_visited ? 'true→false(취소)' : 'false→true(체크)'}`);
+    setVisitingSpotId(spot.id);
+    try {
+      await spotService.updateSpot(spot.storage_id, spot.id, {
+        instagram_url: spot.instagram_url,
+        thumbnail_url: spot.thumbnail_url,
+        user_memo: spot.user_memo,
+        user_rating: spot.user_rating,
+        is_visited: newVisited,
+      });
+      console.log(`[handleVisit] PUT 성공 → is_visited=${newVisited}`);
+
+      const toggle = (s: ApiSpot) => s.id === spot.id ? { ...s, is_visited: newVisited } : s;
+      setSpots((prev) => prev.map(toggle));
+      setAllSpots((prev) => prev.map(toggle));
+
+      console.log('[handleVisit] refreshUserDNA 호출');
+      await refreshUserDNA();
+      console.log('[handleVisit] refreshUserDNA 완료');
+    } catch (e: unknown) {
+      const status = (e as { response?: { status?: number } })?.response?.status;
+      console.error(`[handleVisit] 실패 status=${status}`);
+      if (status === 403) {
+        Alert.alert('권한 없음', '뷰어 권한으로는 방문 처리를 할 수 없습니다.\n편집자(editor) 이상의 권한이 필요합니다.');
+      } else {
+        Alert.alert('오류', newVisited ? '방문 처리에 실패했습니다.' : '방문 취소에 실패했습니다.');
+      }
+    } finally {
+      setVisitingSpotId(null);
+    }
+  }, [visitingSpotId, refreshUserDNA]);
+
   const renderStorageSpotItem = useCallback(({ item }: { item: ApiSpot }) => (
     <SpotCard
       spot={item}
@@ -357,6 +489,8 @@ export default function SavedListScreen() {
           });
         }
       }}
+      onVisit={() => handleVisit(item)}
+      isVisiting={visitingSpotId === item.id}
       onDelete={() => {
         const storageId = item.storage_id;
         Alert.alert(
@@ -380,7 +514,7 @@ export default function SavedListScreen() {
         );
       }}
     />
-  ), [navigation]);
+  ), [navigation, handleVisit, visitingSpotId]);
 
   const renderAllSpotItem = useCallback(({ item }: { item: ApiSpot }) => (
     <SpotCard
@@ -397,8 +531,10 @@ export default function SavedListScreen() {
           });
         }
       }}
+      onVisit={() => handleVisit(item)}
+      isVisiting={visitingSpotId === item.id}
     />
-  ), [navigation]);
+  ), [navigation, handleVisit, visitingSpotId]);
 
   const handleCreateStorage = useCallback(async () => {
     if (!newTitle.trim()) {
@@ -454,6 +590,13 @@ export default function SavedListScreen() {
             <Text style={styles.countText}>
               {selectedFolderId === 'all' ? allSpots.length : spots.length}개
             </Text>
+            {/* 초대 코드 입력 버튼 */}
+            <TouchableOpacity
+              style={styles.inviteButton}
+              onPress={() => setShowInviteModal(true)}
+            >
+              <Ionicons name="enter-outline" size={18} color={COLORS.primary} />
+            </TouchableOpacity>
             <TouchableOpacity
               style={styles.addButton}
               onPress={() => setShowCreateModal(true)}
@@ -483,21 +626,70 @@ export default function SavedListScreen() {
         </View>
 
         {/* ── Storage 정보 배너 ── */}
-        {isStorageFolder && (
-          <View style={styles.storageBanner}>
-            <Ionicons
-              name={selectedFolder.icon}
-              size={14}
-              color={COLORS.primary}
-            />
-            <Text style={styles.storageBannerText}>
-              {selectedFolder.label}
-              {storages.find((s) => String(s.id) === selectedFolderId)?.is_public
-                ? ' · 공개 보관함'
-                : ' · 비공개 보관함'}
-            </Text>
-          </View>
-        )}
+        {isStorageFolder && (() => {
+          const curStorage = storages.find((s) => String(s.id) === selectedFolderId);
+          const isOwner = curStorage?.role === 'owner' || curStorage?.role === undefined;
+          const d = storageDNA;
+          // 각 축: 우세한 쪽 키와 퍼센트
+          const densityKey = d ? (d.axes.density > 50 ? 'D' : 'S') : null;
+          const densityPct = d ? (d.axes.density > 50 ? d.axes.density : 100 - d.axes.density) : null;
+          const colorKey   = d ? (d.axes.color   > 50 ? 'H' : 'M') : null;
+          const colorPct   = d ? (d.axes.color   > 50 ? d.axes.color   : 100 - d.axes.color)   : null;
+          const formKey    = d ? (d.axes.form    > 50 ? 'F' : 'V') : null;
+          const formPct    = d ? (d.axes.form    > 50 ? d.axes.form    : 100 - d.axes.form)    : null;
+          return (
+            <View style={styles.storageBannerWrap}>
+              {/* 첫째 줄: 아이콘 + 이름 + DNA 뱃지 + 초대 버튼 */}
+              <View style={styles.storageBanner}>
+                <Ionicons name={selectedFolder.icon} size={14} color={COLORS.primary} />
+                <Text style={styles.storageBannerText}>
+                  {selectedFolder.label}
+                  {curStorage?.is_public ? ' · 공개 보관함' : ' · 비공개 보관함'}
+                </Text>
+                {d && (
+                  <View style={styles.dnaBadge}>
+                    <Text style={styles.dnaBadgeText}>{d.code}</Text>
+                  </View>
+                )}
+                {isOwner && curStorage && (
+                  <TouchableOpacity
+                    onPress={() =>
+                      navigation.navigate('StorageInvitations', {
+                        storageId: curStorage.id,
+                        storageTitle: curStorage.title,
+                      })
+                    }
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="person-add-outline" size={18} color={COLORS.primary} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* 둘째 줄: DNA 퍼센트 (분석된 장소가 있을 때만) */}
+              {d && (
+                <View style={styles.dnaAxesRow}>
+                  {([
+                    { key: densityKey, pct: densityPct, label: '밀도' },
+                    { key: colorKey,   pct: colorPct,   label: '자극' },
+                    { key: formKey,    pct: formPct,    label: '시간' },
+                  ] as { key: string | null; pct: number | null; label: string }[]).map((axis) => (
+                    <View key={axis.label} style={styles.dnaAxisItem}>
+                      <Text style={styles.dnaAxisLabel}>{axis.label}</Text>
+                      <View style={styles.dnaAxisBar}>
+                        <View style={[styles.dnaAxisFill, { width: `${axis.pct ?? 0}%` as `${number}%` }]} />
+                      </View>
+                      <Text style={styles.dnaAxisPct}>
+                        {axis.key} {axis.pct}%
+                      </Text>
+                    </View>
+                  ))}
+                  <Text style={styles.dnaCountText}>{d.count}곳 분석</Text>
+                </View>
+              )}
+            </View>
+          );
+        })()}
 
         {/* ── 장소 목록 ── */}
         {isStorageFolder ? (
@@ -594,6 +786,67 @@ export default function SavedListScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* ── 초대 코드 입력 모달 ── */}
+      <Modal visible={showInviteModal} transparent animationType="fade">
+        <KeyboardAvoidingView
+          style={modalStyles.overlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <TouchableOpacity
+            style={modalStyles.backdrop}
+            activeOpacity={1}
+            onPress={() => { setShowInviteModal(false); setInviteToken(''); }}
+          />
+          <View style={modalStyles.container}>
+            <View style={modalStyles.inviteHeader}>
+              <Ionicons name="enter-outline" size={22} color={COLORS.primary} />
+              <Text style={modalStyles.title}>초대 코드 입력</Text>
+            </View>
+            <Text style={modalStyles.inviteDesc}>
+              공유받은 초대 링크에서 토큰 부분을 붙여넣으세요.{'\n'}
+              <Text style={modalStyles.inviteExample}>예) picklog://invitations/</Text>
+              <Text style={[modalStyles.inviteExample, { color: COLORS.primary, fontWeight: FONTS.weight.bold }]}>abc123xyz</Text>
+            </Text>
+            <TextInput
+              style={modalStyles.input}
+              value={inviteToken}
+              onChangeText={setInviteToken}
+              placeholder="초대 토큰을 붙여넣으세요"
+              placeholderTextColor={COLORS.gray[400]}
+              autoFocus
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <View style={modalStyles.buttons}>
+              <TouchableOpacity
+                style={modalStyles.cancelBtn}
+                onPress={() => { setShowInviteModal(false); setInviteToken(''); }}
+              >
+                <Text style={modalStyles.cancelText}>취소</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[modalStyles.createBtn, (isJoining || !inviteToken.trim()) && { opacity: 0.6 }]}
+                onPress={() => {
+                  const raw = inviteToken.trim();
+                  // picklog://invitations/XXX 형태로 붙여넣어도 토큰만 추출
+                  const token = raw.replace(/^.*invitations\//, '');
+                  if (!token) {
+                    Alert.alert('입력 오류', '초대 토큰을 입력해주세요.');
+                    return;
+                  }
+                  setShowInviteModal(false);
+                  setInviteToken('');
+                  navigation.navigate('InvitationPreview', { token });
+                }}
+                disabled={isJoining || !inviteToken.trim()}
+              >
+                <Text style={modalStyles.createText}>확인</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -627,6 +880,15 @@ const styles = StyleSheet.create({
     color: COLORS.gray[500],
     fontWeight: FONTS.weight.medium,
   },
+  inviteButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1.5,
+    borderColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   addButton: {
     width: 30,
     height: 30,
@@ -648,22 +910,74 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
 
-  storageBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+  storageBannerWrap: {
     marginHorizontal: SPACING.md,
     marginTop: SPACING.sm,
     backgroundColor: THEME.colors.accentSoft,
     borderRadius: 10,
     paddingVertical: 8,
     paddingHorizontal: 12,
+    gap: 8,
+  },
+  storageBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  dnaAxesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  dnaAxisItem: {
+    flex: 1,
+    gap: 3,
+  },
+  dnaAxisLabel: {
+    fontSize: 9,
+    color: COLORS.gray[500],
+    fontWeight: FONTS.weight.medium,
+  },
+  dnaAxisBar: {
+    height: 4,
+    borderRadius: 99,
+    backgroundColor: 'rgba(0,0,0,0.08)',
+    overflow: 'hidden',
+  },
+  dnaAxisFill: {
+    height: '100%',
+    borderRadius: 99,
+    backgroundColor: COLORS.primary,
+    opacity: 0.7,
+  },
+  dnaAxisPct: {
+    fontSize: 10,
+    color: COLORS.primary,
+    fontWeight: FONTS.weight.bold,
+  },
+  dnaCountText: {
+    fontSize: 9,
+    color: COLORS.gray[400],
+    alignSelf: 'flex-end',
+    marginLeft: 2,
   },
   storageBannerText: {
     flex: 1,
     fontSize: FONTS.size.sm,
     fontWeight: FONTS.weight.medium,
     color: COLORS.primary,
+  },
+  dnaBadge: {
+    backgroundColor: COLORS.primary,
+    borderRadius: THEME.radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  dnaBadgeText: {
+    fontSize: FONTS.size.xs,
+    fontWeight: FONTS.weight.bold,
+    color: COLORS.white,
+    letterSpacing: 0.5,
   },
 
   listContent: {
@@ -748,5 +1062,19 @@ const modalStyles = StyleSheet.create({
     fontSize: FONTS.size.md,
     color: COLORS.white,
     fontWeight: FONTS.weight.semibold,
+  },
+  inviteHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  inviteDesc: {
+    fontSize: FONTS.size.sm,
+    color: COLORS.gray[500],
+    lineHeight: 20,
+  },
+  inviteExample: {
+    fontSize: FONTS.size.sm,
+    color: COLORS.gray[400],
   },
 });

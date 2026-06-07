@@ -11,6 +11,8 @@ export interface ApiStorage {
   is_public: boolean;
   created_at: string;
   deleted_at: string | null;
+  role?: string;       // 'owner' | 'editor' | 'viewer' (서버 응답에 포함될 경우)
+  owner_id?: number;   // 소유자 ID (서버 응답에 포함될 경우)
 }
 
 // POST /storages, PUT /storages/{id} 요청

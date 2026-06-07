@@ -6,8 +6,9 @@
 import create from 'zustand';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { User, LoginInput, SignupInput, ApiUser } from '../types';
-import { SpaceDNAResult } from '../types/dna';
+import { SpaceDNAResult, UserSpaceDNA } from '../types/dna';
 import authService from '../services/authService';
+import dnaService from '../services/dnaService';
 import { setApiToken } from '../services/api';
 
 const TOKEN_KEY = 'access_token';
@@ -27,6 +28,7 @@ interface AuthState {
   user: User | null;
   accessToken: string | null;
   spaceDNA: SpaceDNAResult | null;   // 회원가입 퀴즈 결과 (공간 DNA)
+  userDNA: UserSpaceDNA | null;      // 서버에서 계산된 최신 DNA
   isLoading: boolean;
   error: string | null;
   isInitialized: boolean; // 앱 시작 시 토큰 복원 완료 여부
@@ -38,12 +40,14 @@ interface AuthState {
   signup: (input: SignupInput) => Promise<void>;
   logout: () => Promise<void>;
   clearError: () => void;
+  refreshUserDNA: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   accessToken: null,
   spaceDNA: null,
+  userDNA: null,
   isLoading: false,
   error: null,
   isInitialized: false,
@@ -166,9 +170,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await AsyncStorage.multiRemove([TOKEN_KEY, DNA_KEY]);
       setApiToken(null);
     } finally {
-      set({ user: null, accessToken: null, spaceDNA: null, isLoading: false });
+      set({ user: null, accessToken: null, spaceDNA: null, userDNA: null, isLoading: false });
     }
   },
 
   clearError: () => set({ error: null }),
+
+  /** 방문 완료 후 최신 사용자 DNA를 서버에서 재조회해 store에 반영 */
+  refreshUserDNA: async () => {
+    const { user } = get();
+    if (!user) return;
+    // null = has_data:false or 오류 → userDNA를 null로 세팅해 퀴즈 DNA가 보이게 함
+    const dna = await dnaService.getUserDNA(user.id);
+    set({ userDNA: dna });
+  },
 }));

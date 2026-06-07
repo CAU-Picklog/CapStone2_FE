@@ -11,3 +11,4 @@ export * from './dna';
 export * from './storage';
 export * from './spot';
 export * from './naver';
+export * from './invitation';

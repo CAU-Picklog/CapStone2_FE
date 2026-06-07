@@ -28,6 +28,10 @@ export type RootStackParamList = {
   };
   DNAGuide: undefined;
   CollaborativeMap: undefined;
+  /** 저장소 초대 관리 화면 (owner 전용) */
+  StorageInvitations: { storageId: number; storageTitle: string };
+  /** 초대 미리보기 화면 (token으로 진입) */
+  InvitationPreview: { token: string };
 };
 
 export type TabParamList = {
